@@ -10,6 +10,7 @@
 nj=96
 decode_nj=20
 stage=0
+datasize=800
 enhancement=beamformit # for a new enhancement method,
                        # change this variable and stage 4
 # End configuration section
@@ -28,7 +29,7 @@ json_dir=${chime5_corpus}/transcriptions
 audio_dir=${chime5_corpus}/audio
 
 # training and test data
-train_set=train_worn_u100k
+train_set=train_worn_u"$datasize"k
 test_sets="dev_worn dev_${enhancement}_ref"
 # use the below once you obtain the evaluation data. Also remove the comment #eval# in the lines below
 #eval#test_sets="dev_worn dev_${enhancement}_ref eval_${enhancement}_ref"
@@ -104,8 +105,8 @@ if [ $stage -le 5 ]; then
   # randomly extract first 100k utterances from all mics
   # if you want to include more training data, you can increase the number of array mic utterances
   utils/combine_data.sh data/train_uall data/train_u01 data/train_u02 data/train_u04 data/train_u05 data/train_u06
-  utils/subset_data_dir.sh data/train_uall 100000 data/train_u100k
-  utils/combine_data.sh data/${train_set} data/train_worn data/train_u100k
+  utils/subset_data_dir.sh data/train_uall $(($datasize * 1000)) data/train_u"$datasize"k
+  utils/combine_data.sh data/${train_set} data/train_worn data/train_u"$datasize"k
 
   # only use left channel for worn mic recognition
   # you can use both left and right channels for training
@@ -199,7 +200,7 @@ if [ $stage -le 16 ]; then
     --segmentation-opts "--min-segment-length 0.3 --min-new-segment-length 0.6" \
     data/${train_set} data/lang exp/tri3 exp/tri3_cleaned data/${train_set}_cleaned
 fi
-
+echo "wait for TDNN" && exit 1
 if [ $stage -le 17 ]; then
   # chain TDNN
   local/chain/run_tdnn.sh --nj ${nj} --train-set ${train_set}_cleaned --test-sets "$test_sets" --gmm tri3_cleaned --nnet3-affix _${train_set}_cleaned
