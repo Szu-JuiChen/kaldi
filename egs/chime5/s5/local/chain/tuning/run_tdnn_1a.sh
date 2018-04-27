@@ -134,8 +134,8 @@ if [ $stage -le 13 ]; then
 
   num_targets=$(tree-info $tree_dir/tree |grep num-pdfs|awk '{print $2}')
   learning_rate_factor=$(echo "print 0.5/$xent_regularize" | python)
-  opts="l2-regularize=0.05"
-  output_opts="l2-regularize=0.01 bottleneck-dim=320"
+  opts="l2-regularize=0.01"
+  output_opts="l2-regularize=0.005"
 
   mkdir -p $dir/configs
   cat <<EOF > $dir/configs/network.xconfig
@@ -148,17 +148,17 @@ if [ $stage -le 13 ]; then
   fixed-affine-layer name=lda input=Append(-2,-1,0,1,2,ReplaceIndex(ivector, t, 0)) affine-transform-file=$dir/configs/lda.mat
 
   # the first splicing is moved before the lda layer, so no splicing here
-  relu-batchnorm-layer name=tdnn1 $opts dim=512
-  relu-batchnorm-layer name=tdnn2 $opts dim=512 input=Append(-1,0,1)
-  relu-batchnorm-layer name=tdnn3 $opts dim=512
-  relu-batchnorm-layer name=tdnn4 $opts dim=512 input=Append(-1,0,1)
-  relu-batchnorm-layer name=tdnn5 $opts dim=512
-  relu-batchnorm-layer name=tdnn6 $opts dim=512 input=Append(-3,0,3)
-  relu-batchnorm-layer name=tdnn7 $opts dim=512 input=Append(-3,0,3)
-  relu-batchnorm-layer name=tdnn8 $opts dim=512 input=Append(-6,-3,0)
+  relu-batchnorm-layer name=tdnn1 $opts dim=850
+  relu-batchnorm-layer name=tdnn2 $opts dim=850 input=Append(-1,0,1)
+  relu-batchnorm-layer name=tdnn3 $opts dim=850
+  relu-batchnorm-layer name=tdnn4 $opts dim=850 input=Append(-1,0,1)
+  relu-batchnorm-layer name=tdnn5 $opts dim=850
+  relu-batchnorm-layer name=tdnn6 $opts dim=850 input=Append(-3,0,3)
+  relu-batchnorm-layer name=tdnn7 $opts dim=850 input=Append(-3,0,3)
+  relu-batchnorm-layer name=tdnn8 $opts dim=850 input=Append(-6,-3,0)
 
   ## adding the layers for chain branch
-  relu-batchnorm-layer name=prefinal-chain $opts dim=512 target-rms=0.5
+  relu-batchnorm-layer name=prefinal-chain $opts dim=850 target-rms=0.5
   output-layer name=output include-log-softmax=false $output_opts dim=$num_targets max-change=1.5
 
   # adding the layers for xent branch
@@ -170,7 +170,7 @@ if [ $stage -le 13 ]; then
   # final-layer learns at a rate independent of the regularization
   # constant; and the 0.5 was tuned so as to make the relative progress
   # similar in the xent and regular final layers.
-  relu-batchnorm-layer name=prefinal-xent input=tdnn8 $opts dim=512 target-rms=0.5
+  relu-batchnorm-layer name=prefinal-xent input=tdnn8 $opts dim=850 target-rms=0.5
   output-layer name=output-xent $output_opts dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
@@ -182,6 +182,11 @@ if [ $stage -le 14 ]; then
     utils/create_split_dir.pl \
      /export/b0{3,4,5,6}/$USER/kaldi-data/egs/chime5-$(date +'%m_%d_%H_%M')/s5/$dir/egs/storage $dir/egs/storage
   fi
+  
+  cat $train_data_dir/utt2uniq | awk -F' ' '{print $1}' > $train_data_dir/utt2uniq.tmp1
+  cat $train_data_dir/utt2uniq | awk -F' ' '{print $2}' | sed -e 's/\....//g' > $train_data_dir/utt2uniq.tmp2
+  paste -d" " $train_data_dir/utt2uniq.tmp1 $train_data_dir/utt2uniq.tmp2 > $train_data_dir/utt2uniq
+  rm $train_data_dir/utt2uniq.tmp{1,2}
 
   steps/nnet3/chain/train.py --stage=$train_stage \
     --cmd="$decode_cmd" \
@@ -197,12 +202,14 @@ if [ $stage -le 14 ]; then
     --trainer.num-epochs=10 \
     --trainer.frames-per-iter=3000000 \
     --trainer.optimization.num-jobs-initial=2 \
-    --trainer.optimization.num-jobs-final=4 \
-    --trainer.optimization.initial-effective-lrate=0.001 \
-    --trainer.optimization.final-effective-lrate=0.0001 \
+    --trainer.optimization.num-jobs-final=12 \
+    --trainer.optimization.initial-effective-lrate=0.005 \
+    --trainer.optimization.final-effective-lrate=0.0005 \
     --trainer.optimization.shrink-value=1.0 \
-    --trainer.num-chunk-per-minibatch=256,128,64 \
+    --trainer.num-chunk-per-minibatch=128,64 \
     --trainer.optimization.momentum=0.0 \
+    --trainer.optimization.backstitch-training-scale=0.3 \
+    --trainer.optimization.backstitch-training-interval=1 \
     --egs.chunk-width=$chunk_width \
     --egs.chunk-left-context=$chunk_left_context \
     --egs.chunk-right-context=$chunk_right_context \
