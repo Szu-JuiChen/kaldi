@@ -10,7 +10,7 @@
 nj=96
 decode_nj=20
 stage=0
-datasize=100
+datasize=400
 enhancement=beamformit # for a new enhancement method,
                        # change this variable and stage 4
 # End configuration section
