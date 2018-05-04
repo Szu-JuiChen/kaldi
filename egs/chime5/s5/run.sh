@@ -204,5 +204,16 @@ fi
 
 if [ $stage -le 17 ]; then
   # chain TDNN
-  local/chain/run_tdnn.sh --nj ${nj} --train-set ${train_set}_cleaned --test-sets "$test_sets" --gmm tri3_cleaned --nnet3-affix _${train_set}_cleaned
+  local/chain/run_tdnn.sh --nj ${nj} --train-set ${train_set}_cleaned --test-sets "$test_sets" \
+    --gmm tri3_cleaned --nnet3-affix _${train_set}_cleaned
+fi
+
+if [ $stage -le 18 ]; then
+  # The following scripts cleans all the data using TDNN and produces tdnn cleaned data
+  utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
+  
+  local/clean_and_segment_data.sh --nj ${nj} --cmd "$train_cmd" \
+    --segmentation-opts "--min-segment-length 0.3 --min-new-segment-length 0.6" \
+    data/train_worn_uall data/lang_chain exp/chain_${train_set}_cleaned/tdnn1a_sp \
+    exp/chain_${train_set}_tdnn_cleaned data/train_worn_uall_tdnn_cleaned
 fi
