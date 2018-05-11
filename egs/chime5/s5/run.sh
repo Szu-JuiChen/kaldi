@@ -27,6 +27,7 @@ set -e # exit on error
 chime5_corpus=/export/corpora4/CHiME5
 json_dir=${chime5_corpus}/transcriptions
 audio_dir=${chime5_corpus}/audio
+non_overlap=/export/b18/asubraman/chime5_data_preparation/data_old
 
 # training and test data
 train_set=train_worn_u"$datasize"k
@@ -116,8 +117,26 @@ if [ $stage -le 5 ]; then
   utils/combine_data.sh data/train_uall data/train_u01 data/train_u02 data/train_u04 data/train_u05 data/train_u06
   utils/subset_data_dir.sh data/train_uall $(($datasize * 1000)) data/train_u"$datasize"k
   utils/combine_data.sh data/${train_set} data/train_worn data/train_u"$datasize"k
-
 fi
+
+# if [ $stage -le 6 ]; then
+  # # prepare non-overlap data for extracting iVector in run_ivector_common.sh
+  # for mictype in worn; do
+    # local/prepare_data.sh --mictype ${mictype} \
+			  # ${non_overlap}/train/speech ${json_dir}/train data/train_non_overlap_${mictype}
+  # done
+
+  # # remove possibly bad sessions (P11_S03, P52_S19, P53_S24, P54_S24)
+  # utils/copy_data_dir.sh data/train_non_overlap_worn data/train_non_overlap_worn_org # back up
+  # grep -v -e "^P11_S03" -e "^P52_S19" -e "^P53_S24" -e "^P54_S24" data/train_non_overlap_worn_org/text > data/train_non_overlap_worn/text
+  # utils/fix_data_dir.sh data/train_non_overlap_worn
+
+  # # only use left channel for worn mic recognition
+  # # you can use both left and right channels for training
+  # utils/copy_data_dir.sh data/train_non_overlap_worn data/train_non_overlap_worn_stereo
+  # grep "\.L-" data/train_non_overlap_worn_stereo/text > data/train_non_overlap_worn/text
+  # utils/fix_data_dir.sh data/train_non_overlap_worn
+# fi
 
 if [ $stage -le 6 ]; then
   # Split speakers up into 3-minute chunks.  This doesn't hurt adaptation, and
@@ -128,7 +147,7 @@ if [ $stage -le 6 ]; then
   done
 fi
 
-if [ $stage -le 7 ]; then
+if [ $stage -le 8 ]; then
   # Now make MFCC features.
   # mfccdir should be some place with a largish disk where you
   # want to store MFCC features.
@@ -141,19 +160,19 @@ if [ $stage -le 7 ]; then
   done
 fi
 
-if [ $stage -le 8 ]; then
+if [ $stage -le 9 ]; then
   # make a subset for monophone training
   utils/subset_data_dir.sh --shortest data/${train_set} 100000 data/${train_set}_100kshort
   utils/subset_data_dir.sh data/${train_set}_100kshort 30000 data/${train_set}_30kshort
 fi
 
-if [ $stage -le 9 ]; then
+if [ $stage -le 10 ]; then
   # Starting basic training on MFCC features
   steps/train_mono.sh --nj $nj --cmd "$train_cmd" \
 		      data/${train_set}_30kshort data/lang exp/mono
 fi
 
-if [ $stage -le 10 ]; then
+if [ $stage -le 11 ]; then
   steps/align_si.sh --nj $nj --cmd "$train_cmd" \
 		    data/${train_set} data/lang exp/mono exp/mono_ali
 
@@ -161,7 +180,7 @@ if [ $stage -le 10 ]; then
 			2500 30000 data/${train_set} data/lang exp/mono_ali exp/tri1
 fi
 
-if [ $stage -le 11 ]; then
+if [ $stage -le 12 ]; then
   steps/align_si.sh --nj $nj --cmd "$train_cmd" \
 		    data/${train_set} data/lang exp/tri1 exp/tri1_ali
 
@@ -169,7 +188,7 @@ if [ $stage -le 11 ]; then
 			  4000 50000 data/${train_set} data/lang exp/tri1_ali exp/tri2
 fi
 
-if [ $stage -le 12 ]; then
+if [ $stage -le 13 ]; then
   utils/mkgraph.sh data/lang exp/tri2 exp/tri2/graph
   for dset in ${test_sets}; do
     steps/decode.sh --nj $decode_nj --cmd "$decode_cmd"  --num-threads 4 \
@@ -209,11 +228,14 @@ if [ $stage -le 17 ]; then
 fi
 
 if [ $stage -le 18 ]; then
-  # The following scripts cleans all the data using TDNN and produces tdnn cleaned data
+  # The following scripts cleans all the data using TDNN acoustic model and produces tdnn cleaned data
+  # Please specify the affix of the TDNN model you want to use below
+  affix=1a
+
   utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
   
   local/clean_and_segment_data.sh --nj ${nj} --cmd "$train_cmd" \
     --segmentation-opts "--min-segment-length 0.3 --min-new-segment-length 0.6" \
-    data/train_worn_uall data/lang_chain exp/chain_${train_set}_cleaned/tdnn1a_sp \
-    exp/chain_${train_set}_tdnn_cleaned data/train_worn_uall_tdnn_cleaned
+    data/train_worn_uall data/lang_chain exp/chain_${train_set}_cleaned/tdnn${affix}_sp \
+    exp/chain_${train_set}_cleaned/tdnn1a_sp_cleaned data/train_worn_uall_tdnn_cleaned
 fi
