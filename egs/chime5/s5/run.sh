@@ -31,7 +31,7 @@ non_overlap=/export/b18/asubraman/chime5_data_preparation/data_old
 
 # training and test data
 train_set=train_worn_u"$datasize"k
-test_sets="dev_worn dev_${enhancement}_ref"
+test_sets="dev_worn dev_${enhancement}_ref dev_addition_ref"
 # use the below once you obtain the evaluation data. Also remove the comment #eval# in the lines below
 #eval#test_sets="dev_worn dev_${enhancement}_ref eval_${enhancement}_ref"
 
@@ -231,9 +231,13 @@ if [ $stage -le 18 ]; then
   # The following scripts cleans all the data using TDNN acoustic model and produces tdnn cleaned data
   # Please specify the affix of the TDNN model you want to use below
   affix=1a
+  mfccdir=mfcc
+  # utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
+  # steps/make_mfcc.sh --nj 20 --cmd "$train_cmd" \
+		       # data/train_worn_uall exp/make_mfcc/train_worn_uall $mfccdir
+  # steps/compute_cmvn_stats.sh data/train_worn_uall exp/make_mfcc/train_worn_uall $mfccdir
+  # utils/fix_data_dir.sh data/train_worn_uall
 
-  utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
-  
   local/clean_and_segment_data.sh --nj ${nj} --cmd "$train_cmd" \
     --segmentation-opts "--min-segment-length 0.3 --min-new-segment-length 0.6" \
     data/train_worn_uall data/lang_chain exp/chain_${train_set}_cleaned/tdnn${affix}_sp \

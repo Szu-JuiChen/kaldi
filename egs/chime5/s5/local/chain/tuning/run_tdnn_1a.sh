@@ -62,7 +62,7 @@ local/nnet3/run_ivector_common.sh --stage $stage \
                                   --test-sets "$test_sets" \
                                   --gmm $gmm \
                                   --nnet3-affix "$nnet3_affix" || exit 1;
-exit 1
+
 # Problem: We have removed the "train_" prefix of our training set in
 # the alignment directory names! Bad!
 gmm_dir=exp/$gmm
