@@ -80,7 +80,7 @@ if [ $stage -le 4 ]; then
   # enhanced WAV directory
   enhandir=enhan
   #eval#for dset in dev eval; do
-  for dset in dev; do
+  for dset in dev eval; do
     for mictype in u01 u02 u03 u04 u05 u06; do
       local/run_beamformit.sh --cmd "$train_cmd" \
 			      ${audio_dir}/${dset} \
@@ -88,9 +88,9 @@ if [ $stage -le 4 ]; then
 			      ${mictype}
     done
   done
-
+  
   #eval#for dset in dev eval; do
-  for dset in dev; do
+  for dset in dev eval; do
     local/prepare_data.sh --mictype ref "$PWD/${enhandir}/${dset}_${enhancement}_u0*" \
 			  ${json_dir}/${dset} data/${dset}_${enhancement}_ref
   done
@@ -141,11 +141,26 @@ if [ $stage -le 6 ]; then
 fi
 
 if [ $stage -le 7 ]; then
+  # fix speaker ID issue (thanks to Dr. Naoyuki Kanda)
+  # add array ID to the speaker ID to avoid the use of other array information to meet regulations
+  # Before this fix
+  # $ head -n 2 data/eval_beamformit_ref_nosplit/utt2spk
+  # P01_S01_U02_KITCHEN.ENH-0000192-0001278 P01
+  # P01_S01_U02_KITCHEN.ENH-0001421-0001481 P01
+  # After this fix
+  # $ head -n 2 data/eval_beamformit_ref_nosplit_fix/utt2spk
+  # P01_S01_U02_KITCHEN.ENH-0000192-0001278 P01_U02
+  # P01_S01_U02_KITCHEN.ENH-0001421-0001481 P01_U02
+  for dset in train_non_overlap_worn; do #train_worn_uall ${train_set} ${test_sets}
+  #for dset in dev_${enhancement}_ref eval_${enhancement}_ref; do
+    utils/copy_data_dir.sh data/${dset} data/${dset}_nosplit
+    mkdir -p data/${dset}_nosplit_fix
+    cp data/${dset}_nosplit/{segments,text,wav.scp} data/${dset}_nosplit_fix/
+    awk -F "_" '{print $0 "_" $3}' data/${dset}_nosplit/utt2spk > data/${dset}_nosplit_fix/utt2spk
+    utils/utt2spk_to_spk2utt.pl data/${dset}_nosplit_fix/utt2spk > data/${dset}_nosplit_fix/spk2utt
   # Split speakers up into 3-minute chunks.  This doesn't hurt adaptation, and
   # lets us use more jobs for decoding etc.
-  for dset in train_non_overlap_worn; do #train_worn_uall ${train_set} ${test_sets}
-    utils/copy_data_dir.sh data/${dset} data/${dset}_nosplit
-    utils/data/modify_speaker_info.sh --seconds-per-spk-max 180 data/${dset}_nosplit data/${dset}
+    utils/data/modify_speaker_info.sh --seconds-per-spk-max 180 data/${dset}_nosplit_fix data/${dset}
   done
 fi
 
@@ -160,8 +175,9 @@ if [ $stage -le 8 ]; then
     steps/compute_cmvn_stats.sh data/$x exp/make_mfcc/$x $mfccdir
     utils/fix_data_dir.sh data/$x
   done
+  exit 1
 fi
-exit 1
+
 if [ $stage -le 9 ]; then
   # make a subset for monophone training
   utils/subset_data_dir.sh --shortest data/${train_set} 100000 data/${train_set}_100kshort
@@ -281,4 +297,13 @@ fi
 
 if [ $stage -le 20 ]; then
   local/rnnlm/tuning/run_lstm_1b.sh
+fi
+
+if [ $stage -le 21 ]; then
+  # final scoring to get the official challenge result
+  # please specify both dev and eval set directories so that the search parameters
+  # (insertion penalty and language model weight) will be tuned using the dev set
+  local/score_for_submit.sh \
+      --dev exp/chain_${train_set}_cleaned/tdnn1a_sp/decode_dev_${enhancement}_ref \
+      --eval exp/chain_${train_set}_cleaned/tdnn1a_sp/decode_eval_${enhancement}_ref
 fi
