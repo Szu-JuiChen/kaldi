@@ -10,8 +10,9 @@ set -euo pipefail
 
 stage=0
 train_set=train_worn_u100k
-non_overlap=train_non_overlap_worn
 test_sets="dev_worn dev_beamformit_ref"
+non_overlap=train_non_overlap
+non_overlap_test="dev_worn_non_overlap dev_beamformit_dereverb_ref_non_overlap"
 gmm=tri3
 nj=96
 
@@ -42,19 +43,19 @@ if [ $stage -le 1 ]; then
   utils/fix_data_dir.sh data/${train_set}_sp
   
   #same process for non-overlap data
-  # echo "$0: preparing directory for low-resolution speed-perturbed data (for alignment)"
-  # utils/data/perturb_data_dir_speed_3way.sh data/${non_overlap} data/${non_overlap}_sp
-  # steps/make_mfcc.sh --cmd "$train_cmd" --nj 20 data/${non_overlap}_sp || exit 1;
-  # steps/compute_cmvn_stats.sh data/${non_overlap}_sp || exit 1;
-  # utils/fix_data_dir.sh data/${non_overlap}_sp
+  echo "$0: preparing directory for low-resolution speed-perturbed data (for alignment)"
+  utils/data/perturb_data_dir_speed_3way.sh data/${non_overlap} data/${non_overlap}_sp
+  steps/make_mfcc.sh --cmd "$train_cmd" --nj 20 data/${non_overlap}_sp || exit 1;
+  steps/compute_cmvn_stats.sh data/${non_overlap}_sp || exit 1;
+  utils/fix_data_dir.sh data/${non_overlap}_sp
 fi
 
 if [ $stage -le 2 ]; then
   echo "$0: aligning with the perturbed low-resolution data"
   steps/align_fmllr.sh --nj ${nj} --cmd "$train_cmd" \
     data/${train_set}_sp data/lang $gmm_dir $ali_dir || exit 1
-  # steps/align_fmllr.sh --nj ${nj} --cmd "$train_cmd" \
-    # data/${non_overlap}_sp data/lang $gmm_dir exp/${gmm}_ali_${non_overlap}_sp || exit 1
+  steps/align_fmllr.sh --nj ${nj} --cmd "$train_cmd" \
+    data/${non_overlap}_sp data/lang $gmm_dir exp/${gmm}_ali_${non_overlap}_sp || exit 1
 fi
 
 if [ $stage -le 3 ]; then
@@ -62,24 +63,24 @@ if [ $stage -le 3 ]; then
   # this shows how you can split across multiple file-systems.
   echo "$0: creating high-resolution MFCC features"
   mfccdir=data/${train_set}_sp_hires/data
-  # mfccdir_non_overlap=data/${non_overlap}_sp_hires/data
+  mfccdir_non_overlap=data/${non_overlap}_sp_hires/data
   if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $mfccdir/storage ]; then
    utils/create_split_dir.pl /export/b1{5,6,7,8}/$USER/kaldi-data/mfcc/chime5-$(date +'%m_%d_%H_%M')/s5/$mfccdir/storage $mfccdir/storage
   fi
-  # if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $mfccdir_non_overlap/storage ]; then
-    # utils/create_split_dir.pl /export/b1{5,6,7,8}/$USER/kaldi-data/mfcc/chime5-$(date +'%m_%d_%H_%M')/s5/$mfccdir_non_overlap/storage $mfccdir_non_overlap/storage
-  # fi
+  if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $mfccdir_non_overlap/storage ]; then
+    utils/create_split_dir.pl /export/b1{5,6,7,8}/$USER/kaldi-data/mfcc/chime5-$(date +'%m_%d_%H_%M')/s5/$mfccdir_non_overlap/storage $mfccdir_non_overlap/storage
+  fi
 
-  for datadir in ${test_sets}; do # ${non_overlap}_sp ${train_set}_sp
+  for datadir in ${non_overlap_test} ${non_overlap}_sp ${train_set}_sp ${test_sets}; do
     utils/copy_data_dir.sh data/$datadir data/${datadir}_hires
   done
 
   # do volume-perturbation on the training data prior to extracting hires
   # features; this helps make trained nnets more invariant to test data volume.
   utils/data/perturb_data_dir_volume.sh data/${train_set}_sp_hires || exit 1;
-  # utils/data/perturb_data_dir_volume.sh data/${non_overlap}_sp_hires || exit 1;
+  utils/data/perturb_data_dir_volume.sh data/${non_overlap}_sp_hires || exit 1;
 
-  for datadir in ${test_sets}; do # ${non_overlap}_sp ${train_set}_sp
+  for datadir in ${non_overlap_test} ${non_overlap}_sp ${train_set}_sp ${test_sets}; do
     steps/make_mfcc.sh --nj 20 --mfcc-config conf/mfcc_hires.conf \
       --cmd "$train_cmd" data/${datadir}_hires || exit 1;
     steps/compute_cmvn_stats.sh data/${datadir}_hires || exit 1;
@@ -93,16 +94,16 @@ if [ $stage -le 4 ]; then
   mkdir -p exp/nnet3${nnet3_affix}/diag_ubm
   temp_data_root=exp/nnet3${nnet3_affix}/diag_ubm
 
-  num_utts_total=$(wc -l <data/${train_set}_sp_hires/utt2spk)
-  num_utts=$[$num_utts_total/4]
-  utils/data/subset_data_dir.sh data/${train_set}_sp_hires \
-     $num_utts ${temp_data_root}/${train_set}_sp_hires_subset
+  num_utts_total=$(wc -l <data/${non_overlap}_sp_hires/utt2spk)
+  num_utts=$[$num_utts_total/2]
+  utils/data/subset_data_dir.sh data/${non_overlap}_sp_hires \
+     $num_utts ${temp_data_root}/${non_overlap}_sp_hires_subset
 
   echo "$0: computing a PCA transform from the hires data."
   steps/online/nnet2/get_pca_transform.sh --cmd "$train_cmd" \
       --splice-opts "--left-context=3 --right-context=3" \
       --max-utts 10000 --subsample 2 \
-       ${temp_data_root}/${train_set}_sp_hires_subset \
+       ${temp_data_root}/${non_overlap}_sp_hires_subset \
        exp/nnet3${nnet3_affix}/pca_transform
 
   echo "$0: training the diagonal UBM."
@@ -110,7 +111,7 @@ if [ $stage -le 4 ]; then
   steps/online/nnet2/train_diag_ubm.sh --cmd "$train_cmd" --nj 30 \
     --num-frames 700000 \
     --num-threads 8 \
-    ${temp_data_root}/${train_set}_sp_hires_subset 512 \
+    ${temp_data_root}/${non_overlap}_sp_hires_subset 512 \
     exp/nnet3${nnet3_affix}/pca_transform exp/nnet3${nnet3_affix}/diag_ubm
 fi
 
@@ -120,7 +121,7 @@ if [ $stage -le 5 ]; then
   # 100.
   echo "$0: training the iVector extractor"
   steps/online/nnet2/train_ivector_extractor.sh --cmd "$train_cmd" --nj 20 \
-     data/${train_set}_sp_hires exp/nnet3${nnet3_affix}/diag_ubm \
+     data/${non_overlap}_sp_hires exp/nnet3${nnet3_affix}/diag_ubm \
      exp/nnet3${nnet3_affix}/extractor || exit 1;
 fi
 
@@ -155,7 +156,7 @@ if [ $stage -le 6 ]; then
   # Also extract iVectors for the test data, but in this case we don't need the speed
   # perturbation (sp).
   for data in $test_sets; do
-    steps/online/nnet2/extract_ivectors_online.sh --cmd "$train_cmd" --nj 20 \
+    steps/online/nnet2/extract_ivectors_online.sh --cmd "$train_cmd" --nj 8 \
       data/${data}_hires exp/nnet3${nnet3_affix}/extractor \
       exp/nnet3${nnet3_affix}/ivectors_${data}_hires
   done

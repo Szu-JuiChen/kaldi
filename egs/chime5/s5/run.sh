@@ -27,11 +27,12 @@ set -e # exit on error
 chime5_corpus=/export/corpora4/CHiME5
 json_dir=${chime5_corpus}/transcriptions
 audio_dir=${chime5_corpus}/audio
-non_overlap=/export/b02/leibny/chime5/chime5-neural-beamforming/chime5-data-preparation/data/train/speech
-#/export/b18/asubraman/chime5_data_preparation/data/train/speech/
+conf_dir=/export/b05/cszu/conf
+noise_dir=/export/b05/cszu/noise
+non_overlap_data=/export/b02/leibny/chime5/chime5-neural-beamforming/chime5-data-preparation
 
 # training and test data
-train_set=train_worn_u"$datasize"k
+train_set=train_worn_simu_u"$datasize"k
 test_sets="dev_worn dev_${enhancement}_dereverb_ref dev_addition_dereverb_ref"
 # use the below once you obtain the evaluation data. Also remove the comment #eval# in the lines below
 #eval#test_sets="dev_worn dev_${enhancement}_ref eval_${enhancement}_ref"
@@ -45,7 +46,6 @@ if [ $stage -le 1 ]; then
     local/prepare_data.sh --mictype ${mictype} \
 			  ${audio_dir}/train ${json_dir}/train data/train_${mictype}
   done
-  #eval#for dataset in dev eval; do
   for dataset in dev; do
     for mictype in worn; do
       local/prepare_data.sh --mictype ${mictype} \
@@ -79,7 +79,6 @@ if [ $stage -le 4 ]; then
   # Beamforming using reference arrays
   # enhanced WAV directory
   enhandir=enhan
-  #eval#for dset in dev eval; do
   for dset in dev eval; do
     for mictype in u01 u02 u03 u04 u05 u06; do
       local/run_beamformit.sh --cmd "$train_cmd" \
@@ -89,20 +88,73 @@ if [ $stage -le 4 ]; then
     done
   done
   
-  #eval#for dset in dev eval; do
-  for dset in dev eval; do
+  for dset in dev; do
     local/prepare_data.sh --mictype ref "$PWD/${enhandir}/${dset}_${enhancement}_u0*" \
 			  ${json_dir}/${dset} data/${dset}_${enhancement}_ref
   done
 fi
 
 if [ $stage -le 5 ]; then
+  # Prepare data for reverberant speech
+  # augmented WAV directory
+  for set in train; do
+    for mictype in aug; do
+      local/prepare_data.sh --mictype aug --rn 1 --cdir ${conf_dir} \
+                            --ndir ${noise_dir}/${set} \
+                            ${audio_dir}/${set} ${json_dir}/${set} \
+                            data/${set}_${mictype}
+    done
+  done
+  # prepare non-overlapped training data for extracting iVector in run_ivector_common.sh
+  # first obtain the non-overlapped segment information
+  # worn data
+  for file in $(find ${non_overlap_data}_worn/data/train/ -maxdepth 1 -name "segments_S[0-9]*"); do
+    grep "S[0-9]*_P[0-9]" $file | sort >> segments.tmp_train_worn
+  done
+  awk -F " " '{print $2}' segments.tmp_train_worn | awk -F "_" '{print $2"_"$1"_NOLOCATION.L-"$3"-"$4}{print $2"_"$1"_NOLOCATION.R-"$3"-"$4}' | awk -F "." '{print $1"."$2}' > segments.tmp_train_worn2
+  # array data
+  for file in $(find ${non_overlap_data}_array/data/train -maxdepth 1 -name "segments_S[0-9]*"); do
+    grep "S[0-9]*_U[0-9].*P[0-9]" $file | sort >> segments.tmp_train_array
+  done
+  awk -F " " '{print $2}' segments.tmp_train_array | awk -F'[_.]' '{print $5"_"$1"_"$2"_NOLOCATION."$7"-"$3"-"$4}' | sort > segments.tmp_train_array2
+  # prepare non-overlapped dev data
+  # worn data
+  for file in $(find ${non_overlap_data}_worn/data/dev/ -maxdepth 1 -name "segments_S[0-9]*"); do
+    grep "S[0-9]*_P[0-9]" $file | sort >> segments.tmp_dev_worn
+  done
+  awk -F " " '{print $2}' segments.tmp_dev_worn | awk -F'[_.]' '{print $2"_"$1"_"toupper($6)".L-"$3"-"$4}{print $2"_"$1"_"toupper($6)".R-"$3"-"$4}' | sort > segments.tmp_dev_worn2
+  # array data
+  for file in $(find ${non_overlap_data}_array/data/dev -name "segments_S[0-9]*"); do
+    grep "S[0-9]*_U[0-9].*P[0-9]*.[a-z]" $file | sort >> segments.tmp_dev_array
+  done
+  awk -F " " '{print $2}' segments.tmp_dev_array | awk -F'[_.]' '{print $5"_"$1"_"$2"_"toupper($6)".ENH-"$3"-"$4}' | sort > segments.tmp_dev_array2
+fi
+
+if [ $stage -le 6 ]; then
   # remove possibly bad sessions (P11_S03, P52_S19, P53_S24, P54_S24)
   # see http://spandh.dcs.shef.ac.uk/chime_challenge/data.html for more details
-  utils/copy_data_dir.sh data/train_worn data/train_worn_org # back up
-  grep -v -e "^P11_S03" -e "^P52_S19" -e "^P53_S24" -e "^P54_S24" data/train_worn_org/text > data/train_worn/text
-  utils/fix_data_dir.sh data/train_worn
+  for type in worn; do #aug
+    utils/copy_data_dir.sh data/train_${type} data/train_${type}_org # back up
+    grep -v -e "^P11_S03" -e "^P52_S19" -e "^P53_S24" -e "^P54_S24" data/train_${type}_org/text > data/train_${type}/text
+    utils/fix_data_dir.sh data/train_${type}
+  done
   
+  # combine mix array and worn mics
+  # randomly extract first 100k utterances from all mics
+  # if you want to include more training data, you can increase the number of array mic utterances
+  utils/combine_data.sh data/train_uall data/train_u01 data/train_u02 data/train_u04 data/train_u05 data/train_u06
+  utils/subset_data_dir.sh data/train_uall $(($datasize * 1000)) data/train_u"$datasize"k
+  utils/subset_data_dir.sh data/train_aug $(($datasize * 1000)) data/train_aug"$datasize"k
+  utils/combine_data.sh data/${train_set} data/train_worn data/train_u"$datasize"k data/train_aug"$datasize"k
+  utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
+  
+  # non-overlapped data extraction
+  utils/subset_data_dir.sh --utt-list segments.tmp_train_worn2 data/train_worn data/train_non_overlap_worn
+  utils/subset_data_dir.sh --utt-list segments.tmp_train_array2 data/train_uall data/train_non_overlap_uall
+  utils/subset_data_dir.sh --utt-list segments.tmp_dev_worn2 data/dev_worn data/dev_worn_non_overlap
+  utils/subset_data_dir.sh --utt-list segments.tmp_dev_array2 data/dev_beamformit_dereverb_ref data/dev_beamformit_dereverb_ref_non_overlap
+  utils/combine_data.sh data/train_non_overlap data/train_non_overlap_worn data/train_non_overlap_uall data/train_aug"$datasize"k
+  rm -f segments.*
   # only use left channel for worn mic recognition
   # you can use both left and right channels for training
   #eval#for dset in train dev eval; do
@@ -111,33 +163,6 @@ if [ $stage -le 5 ]; then
     grep "\.L-" data/${dset}_worn_stereo/text > data/${dset}_worn/text
     utils/fix_data_dir.sh data/${dset}_worn
   done
-  
-  # combine mix array and worn mics
-  # randomly extract first 100k utterances from all mics
-  # if you want to include more training data, you can increase the number of array mic utterances
-  utils/combine_data.sh data/train_uall data/train_u01 data/train_u02 data/train_u04 data/train_u05 data/train_u06
-  utils/subset_data_dir.sh data/train_uall $(($datasize * 1000)) data/train_u"$datasize"k
-  utils/combine_data.sh data/${train_set} data/train_worn data/train_u"$datasize"k
-  utils/combine_data.sh data/train_worn_uall data/train_worn data/train_uall
-fi
-
-if [ $stage -le 6 ]; then
-  # prepare non-overlap data for extracting iVector in run_ivector_common.sh
-  for mictype in worn; do
-    local/prepare_nonoverlap_data.sh --mictype ${mictype} \
-			  ${non_overlap} ${json_dir}/train data/train_non_overlap_${mictype}
-  done
-
-  # remove possibly bad sessions (P11_S03, P52_S19, P53_S24, P54_S24)
-  utils/copy_data_dir.sh data/train_non_overlap_worn data/train_non_overlap_worn_org # back up
-  grep -v -e "^P11_S03" -e "^P52_S19" -e "^P53_S24" -e "^P54_S24" data/train_non_overlap_worn_org/text > data/train_non_overlap_worn/text
-  utils/fix_data_dir.sh data/train_non_overlap_worn
-
-  # only use left channel for worn mic recognition
-  # you can use both left and right channels for training
-  utils/copy_data_dir.sh data/train_non_overlap_worn data/train_non_overlap_worn_stereo
-  grep "\.L-" data/train_non_overlap_worn_stereo/text > data/train_non_overlap_worn/text
-  utils/fix_data_dir.sh data/train_non_overlap_worn
 fi
 
 if [ $stage -le 7 ]; then
@@ -151,15 +176,20 @@ if [ $stage -le 7 ]; then
   # $ head -n 2 data/eval_beamformit_ref_nosplit_fix/utt2spk
   # P01_S01_U02_KITCHEN.ENH-0000192-0001278 P01_U02
   # P01_S01_U02_KITCHEN.ENH-0001421-0001481 P01_U02
-  for dset in train_non_overlap_worn; do #train_worn_uall ${train_set} ${test_sets}
-  #for dset in dev_${enhancement}_ref eval_${enhancement}_ref; do
+  for dset in dev_${enhancement}_dereverb_ref dev_addition_dereverb_ref dev_${enhancement}_dereverb_ref_non_overlap; do #eval_${enhancement}_ref
     utils/copy_data_dir.sh data/${dset} data/${dset}_nosplit
     mkdir -p data/${dset}_nosplit_fix
     cp data/${dset}_nosplit/{segments,text,wav.scp} data/${dset}_nosplit_fix/
     awk -F "_" '{print $0 "_" $3}' data/${dset}_nosplit/utt2spk > data/${dset}_nosplit_fix/utt2spk
     utils/utt2spk_to_spk2utt.pl data/${dset}_nosplit_fix/utt2spk > data/${dset}_nosplit_fix/spk2utt
+  done
   # Split speakers up into 3-minute chunks.  This doesn't hurt adaptation, and
   # lets us use more jobs for decoding etc.
+  for dset in dev_worn_non_overlap; do #train_non_overlap ${train_set} dev_worn
+    utils/copy_data_dir.sh data/${dset} data/${dset}_nosplit
+    utils/data/modify_speaker_info.sh --seconds-per-spk-max 180 data/${dset}_nosplit data/${dset}
+  done
+  for dset in dev_${enhancement}_dereverb_ref dev_${enhancement}_dereverb_ref_non_overlap dev_addition_dereverb_ref eval_${enhancement}_ref; do
     utils/data/modify_speaker_info.sh --seconds-per-spk-max 180 data/${dset}_nosplit_fix data/${dset}
   done
 fi
@@ -169,13 +199,12 @@ if [ $stage -le 8 ]; then
   # mfccdir should be some place with a largish disk where you
   # want to store MFCC features.
   mfccdir=mfcc
-  for x in train_non_overlap_worn; do #train_worn_uall ${train_set} ${test_sets}
+  for x in dev_worn_non_overlap dev_${enhancement}_dereverb_ref_non_overlap; do #train_non_overlap train_worn_uall ${train_set} ${test_sets}
     steps/make_mfcc.sh --nj 20 --cmd "$train_cmd" \
 		       data/$x exp/make_mfcc/$x $mfccdir
     steps/compute_cmvn_stats.sh data/$x exp/make_mfcc/$x $mfccdir
     utils/fix_data_dir.sh data/$x
   done
-  exit 1
 fi
 
 if [ $stage -le 9 ]; then
@@ -241,47 +270,19 @@ fi
 
 if [ $stage -le 17 ]; then
   # chain TDNN
-  local/chain/run_tdnn.sh --nj ${nj} --train-set ${train_set}_cleaned --test-sets "$test_sets" \
+  local/chain/run_tdnn_lstm.sh --nj ${nj} --train-set ${train_set}_cleaned --test-sets "$test_sets" \
     --gmm tri3_cleaned --nnet3-affix _${train_set}_cleaned
-  exit 1
 fi
 
 if [ $stage -le 18 ]; then
   # Please specify the affix of the TDNN model you want to use below
   affix=1a
-  
-  # echo "$0: creating high-resolution MFCC features"
-  # mfccdir=data/train_worn_uall_hires/data
-  # if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $mfccdir/storage ]; then
-   # utils/create_split_dir.pl /export/b1{5,6,7,8}/$USER/kaldi-data/mfcc/chime5-$(date +'%m_%d_%H_%M')/s5/$mfccdir/storage $mfccdir/storage
-  # fi
-  # utils/copy_data_dir.sh data/train_worn_uall data/train_worn_uall_hires
-  # steps/make_mfcc.sh --nj 10 --mfcc-config conf/mfcc_hires.conf \
-      # --cmd "$train_cmd" data/train_worn_uall_hires || exit 1;
-  # steps/compute_cmvn_stats.sh data/train_worn_uall_hires || exit 1;
-  # utils/fix_data_dir.sh data/train_worn_uall_hires || exit 1;
-
-  # ivectordir=exp/nnet3_${train_set}_cleaned/ivectors_train_worn_uall_hires
-  # if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $ivectordir/storage ]; then
-    # utils/create_split_dir.pl /export/b0{5,6,7,8}/$USER/kaldi-data/ivectors/chime5-$(date +'%m_%d_%H_%M')/s5/$ivectordir/storage $ivectordir/storage
-  # fi
-  # temp_data_root=${ivectordir}
-  # utils/data/modify_speaker_info.sh --utts-per-spk-max 2 \
-    # data/train_worn_uall_hires ${temp_data_root}/train_worn_uall_hires_max2
-
-  # steps/online/nnet2/extract_ivectors_online.sh --cmd "$train_cmd" --nj ${nj} \
-    # ${temp_data_root}/train_worn_uall_hires_max2 \
-    # exp/nnet3_${train_set}_cleaned/extractor $ivectordir
-
-  # utils/copy_data_dir.sh data/train_worn_uall_hires data/train_worn_uall_hires_nosplit
-  # utils/data/modify_speaker_info.sh --seconds-per-spk-max 180 data/train_worn_uall_hires_nosplit data/train_worn_uall_hires
-  
-  #attemp 2
-  # local/nnet3/run_ivector_common.sh --stage 3 \
-                                    # --train-set train_worn_uall \
-                                    # --test-sets "" \
-                                    # --gmm tri3 \
-                                    # --nnet3-affix _train_worn_uall || exit 1;
+  local/nnet3/run_ivector_common.sh --train-set train_worn_uall \
+                                    --test-sets "" \
+                                    --non-overlap "" \
+                                    --non_overlap_test "" \
+                                    --gmm tri3 \
+                                    --nnet3-affix _train_worn_uall || exit 1;
   
   # The following scripts cleans all the data using TDNN acoustic model and produces tdnn cleaned data
   local/clean_and_segment_data.sh --nj ${nj} --cmd "$train_cmd" \
@@ -292,14 +293,9 @@ fi
 
 if [ $stage -le 19 ]; then
   local/rnnlm/run_lstm.sh
-  exit 1
 fi
 
 if [ $stage -le 20 ]; then
-  local/rnnlm/tuning/run_lstm_1b.sh
-fi
-
-if [ $stage -le 21 ]; then
   # final scoring to get the official challenge result
   # please specify both dev and eval set directories so that the search parameters
   # (insertion penalty and language model weight) will be tuned using the dev set

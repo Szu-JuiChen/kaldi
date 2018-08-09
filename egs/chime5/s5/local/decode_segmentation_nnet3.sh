@@ -35,7 +35,7 @@ extra_left_context=0
 extra_right_context=0
 extra_left_context_initial=-1
 extra_right_context_final=-1
-online_ivector_dir=
+online_ivector_dir=exp/nnet3_train_worn_uall/ivectors_train_worn_uall_sp_hires/
 minimize=false
 # End configuration section.
 

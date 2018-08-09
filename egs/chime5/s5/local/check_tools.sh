@@ -48,6 +48,9 @@ command -v phonetisaurus-align &>/dev/null \
 command -v BeamformIt &>/dev/null \
   || { echo  >&2 "BeamformIt not found on PATH. Please use the script $KALDI_ROOT/tools/extras/install_beamformit.sh to install it"; exit 1; }
 
+command -v ffmpeg &>/dev/null \
+  || { echo >&2 "FFMPEG not found on PATH. You will have to install FFMPEG"; exit 1; }
+
 exit  0
 
 

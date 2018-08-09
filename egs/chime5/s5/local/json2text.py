@@ -27,7 +27,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('json', type=str, help='JSON transcription file')
     parser.add_argument('--mictype', type=str,
-                        choices=['ref', 'worn', 'u01', 'u02', 'u03', 'u04', 'u05', 'u06'],
+                        choices=['ref', 'worn', 'aug', 'u01', 'u02', 'u03', 'u04', 'u05', 'u06'],
                         help='Type of microphones')
     args = parser.parse_args()
 
@@ -46,6 +46,8 @@ if __name__ == '__main__':
             if args.mictype == 'ref':
                 mictype = x['ref']
             elif args.mictype == 'worn':
+                mictype = 'original'
+            elif args.mictype == 'aug':
                 mictype = 'original'
             else:
                 mictype = args.mictype.upper() # convert from u01 to U01
@@ -76,7 +78,7 @@ if __name__ == '__main__':
             end_time = hms_to_seconds(end_time)
 
             uttid = speaker_id + '_' + session_id
-            if not args.mictype == 'worn':
+            if not args.mictype == 'worn' and not args.mictype == 'aug':
                 uttid += '_' + mictype
             uttid += '_' + location + '-' + start_time + '-' + end_time
 

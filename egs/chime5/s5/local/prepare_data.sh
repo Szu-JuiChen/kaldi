@@ -6,6 +6,9 @@
 # Begin configuration section.
 mictype=worn # worn, ref or others
 cleanup=true
+rn=0
+cdir=${adir}/../../conf
+ndir=${adir}/../../noise/train
 # End configuration section
 . ./utils/parse_options.sh  # accept options.. you can run this run.sh with the
 
@@ -87,6 +90,40 @@ elif [ $mictype == "ref" ]; then
   paste -d" " \
 	<(awk -F "/" '{print $NF}' $dir/wav.flist2 | sed -e "s/\.wav/.ENH/") \
 	$dir/wav.flist2 | sort > $dir/wav.scp
+elif [ $mictype == "aug" ]; then
+  # convert filenames to wav.scp format, use the basename of the file
+  find $adir -name "S[0-9]*_P[0-9]*.wav" | \
+    perl -ne '{
+      chomp;
+      $path = $_;
+      next unless $path;
+      @F = split "/", $path;
+      ($f = $F[@F-1]) =~ s/.wav//;
+      @F = split "_", $f;
+      $t = "${F[1]}_${F[0]}";
+      @mic_seq = ('U01', 'U02', 'U04', 'U05', 'U06');
+      foreach $mic (@mic_seq) {
+        print "${t}_${mic}.AUG.L ffmpeg -safe 0 -f concat -i `./local/room_simulator.sh ${t}_${mic}` -map_channel 0.0.0 -f wav pipe: 2>/dev/null |\n";
+        print "${t}_${mic}.AUG.R ffmpeg -safe 0 -f concat -i `./local/room_simulator.sh ${t}_${mic}` -map_channel 0.0.1 -f wav pipe: 2>/dev/null |\n";
+      }
+    }' | sort > $dir/wav.scp.t
+  p="\` "
+  cat $dir/wav.scp.t | sed "s@$p@\ $cdir\ $rn\ $ndir\ $adir$p@g" | sort > $dir/wav.scp
+
+  # Get a text
+  cat $dir/text.orig | \
+    perl -ne '{
+      chomp;
+      $name = $_;
+      next unless $name;
+      @F = split "_", $name;
+      @G = split "-", $F[@F-1];
+      @mic_seq = ('U01', 'U02', 'U04', 'U05', 'U06');
+      foreach $mic (@mic_seq) {
+        print "${F[0]}_${F[1]}_${mic}_${G[0]}.AUG.L-${G[1]}-${G[2]}\n";
+        print "${F[0]}_${F[1]}_${mic}_${G[0]}.AUG.R-${G[1]}-${G[2]}\n";
+      }
+    }' | sort > $dir/text
 else
   # array mic case
   # convert the filenames to wav.scp format, use the basename of the file
@@ -111,7 +148,7 @@ fi
 $cleanup && rm -f $dir/text.* $dir/wav.scp.* $dir/wav.flist
 
 # Prepare 'segments', 'utt2spk', 'spk2utt'
-if [ $mictype == "worn" ]; then
+if [ $mictype == "worn" ] || [ $mictype == "aug" ]; then
   cut -d" " -f 1 $dir/text | \
     awk -F"-" '{printf("%s %s %08.2f %08.2f\n", $0, $1, $2/100.0, $3/100.0)}' |\
     sed -e "s/_[A-Z]*\././2" \
