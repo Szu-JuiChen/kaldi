@@ -32,7 +32,7 @@ enhan=$1
 embedding_dim=2048
 lstm_rpd=512
 lstm_nrpd=512
-stage=-10
+stage=8
 train_stage=-10
 
 # variables for lattice rescoring
@@ -154,37 +154,71 @@ if [ $stage -le 6 ] && $run_nbest_rescore; then
   echo "$0: Perform nbest-rescoring on $ac_model_dir"
   for decode_set in dt05_real dt05_simu et05_real et05_simu; do
     decode_dir=$tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${LM}
-    (
     # Lattice rescoring
     rnnlm/lmrescore_nbest.sh \
       --cmd "$train_cmd --mem 2G" --N $nbest \
       $rnnweight data/lang_test_$LM $dir \
       data/${decode_set}_${enhan}_chunked ${decode_dir} \
-      $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}
-
-    if $use_backward_model; then
-      rnnlm/lmrescore_nbest_back.sh \
-        --cmd "$train_cmd --mem 2G" --N $nbest \
-        $rnnweight data/lang_test_$LM ${dir}_back \
-        data/${decode_set}_${enhan}_chunked \
-        $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
-        $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi
-    fi
-    ) &
+      $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} &
   done
+  
   wait
+  
   # calc wers for nbest-rescoring results
-  if $use_backward_model; then
-    local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi \
+  local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
+      $tgtdir/graph_tgpr_5k \
+      > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
+  head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
+fi
+
+if [ $stage -le 7 ] && $run_lat_rescore && $use_backward_model; then
+  echo "$0: Perform backward lattice-rescoring on $ac_model_dir"
+  for decode_set in dt05_real dt05_simu et05_real et05_simu; do
+    decode_dir=$tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}
+    if [ ! -d ${decode_dir} ]; then
+      echo "$0: Must run stage 5 first at local/rnnlm/run_lstm.sh"
+      exit 1
+    fi
+
+    # Lattice rescoring
+    rnnlm/lmrescore_back.sh \
+      --cmd "$decode_cmd --mem 4G" \
+      --weight 0.5 --max-ngram-order $ngram_order \
+      data/lang_test_$LM ${dir}_back \
+      data/${decode_set}_${enhan}_chunked ${decode_dir} \
+      ${decode_dir}_bi &
+  done
+  
+  wait
+  
+  # calc wers for lattice-rescoring results
+  local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_bi \
+      $tgtdir/graph_tgpr_5k \
+      > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_bi.result
+  head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_bi.result
+fi
+
+if [ $stage -le 8 ] && $run_nbest_rescore && $use_backward_model; then
+  for decode_set in dt05_real dt05_simu et05_real et05_simu; do
+    decode_dir=$tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}
+    if [ ! -d ${decode_dir} ]; then
+      echo "$0: Must run stage 6 first at local/rnnlm/run_lstm.sh"
+      exit 1
+    fi
+    
+    rnnlm/lmrescore_nbest_back.sh \
+      --cmd "$train_cmd --mem 2G" --N $nbest \
+      $rnnweight data/lang_test_$LM ${dir}_back \
+      data/${decode_set}_${enhan}_chunked ${decode_dir} \
+      ${decode_dir}_bi &
+  done
+  
+  wait
+  
+  local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi \
       $tgtdir/graph_tgpr_5k \
       > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi.result
-    head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi.result
-  else
-    local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
-        $tgtdir/graph_tgpr_5k \
-        > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
-    head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
-  fi
-fi
+  head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi.result
+fi 
 
 exit 0
