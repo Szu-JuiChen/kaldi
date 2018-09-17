@@ -3,11 +3,11 @@
 # Copyright 2017  Hainan Xu
 #           2017  Szu-Jui Chen
 
-# This script is very similar to utils/rnnlm_compute_scores.sh, and it computes
-# log-likelihoods from a Kaldi-RNNLM model instead of that of Mikolov's RNNLM.
-# Because Kaldi-RNNLM uses letter-features which does not need an <OOS> symbol,
-# we don't need the "unk.probs" file any more to add as a penalty term in sentence
-# likelihoods.
+# This script is very similar to rnnlm/compute_sentence_scores.sh, where it do the
+# same procedure for reversed data. And it computes log-likelihoods from a
+# Kaldi-RNNLM model instead of that of Mikolov's RNNLM. Because Kaldi-RNNLM uses
+# letter-features which does not need an <OOS> symbol, we don't need the "unk.probs"
+# file any more to add as a penalty term in sentence likelihoods.
 
 ensure_normalized_probs=false  # If true then the probabilities computed by the
                                # RNNLM will be correctly normalized. Note it is
@@ -44,10 +44,10 @@ for x in final.raw config/words.txt; do
 done
 
 mkdir -p $tempdir
-cat $text_in | sym2int.pl -f 2- ${dir}/config/words.txt | \
+cat $text_in | sym2int.pl -f 2- $dir/config/words.txt | \
     awk '{printf("%s ",$1);for(i=NF;i>1;i--) printf("%s ",$i); print""}' > $tempdir/text.int
-
-special_symbol_opts=$(cat $dir/special_symbol_opts.txt)
+    
+special_symbol_opts=$(cat ${dir}/special_symbol_opts.txt)
 
 rnnlm-sentence-probs --normalize-probs=$ensure_normalized_probs \
        $special_symbol_opts $dir/final.raw "$word_embedding" $tempdir/text.int > $tempdir/loglikes.rnn

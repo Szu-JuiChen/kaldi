@@ -139,7 +139,3 @@ if ! $skip_scoring ; then
 fi
 
 exit 0;
-
-
-
-

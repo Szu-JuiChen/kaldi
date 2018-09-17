@@ -26,8 +26,8 @@
 # -3.27 -3.27 -3.27 -3.27 -3.27 -3.27 -3.27 -3.27 -3.27 -3.27 -3.28 -3.28 -3.28 -3.28 -3.29 -3.29 -3.29 
 
 # Begin configuration section.
-
-dir=exp/rnnlm_lstm_1a
+affix=1a
+dir=exp/rnnlm_lstm_${affix}
 enhan=$1
 embedding_dim=2048
 lstm_rpd=512
@@ -38,8 +38,9 @@ train_stage=-10
 # variables for lattice rescoring
 run_lat_rescore=true
 run_nbest_rescore=true
+use_backward_model=true
 ac_model_dir=exp/chain/tdnn1a_sp
-decode_dir_suffix=rnnlm_lstm_1a
+decode_dir_suffix=rnnlm_lstm_${affix}
 ngram_order=4 # approximate the lattice-rescoring by limiting the max-ngram-order
               # if it's set, it merges histories in the lattice if they share
               # the same ngram history and this prevents the lattice from 
@@ -51,7 +52,7 @@ ngram_order=4 # approximate the lattice-rescoring by limiting the max-ngram-orde
 
 srcdir=data/local/local_lm
 lexicon=data/local/dict/lexiconp.txt
-text_dir=data/rnnlm/text_nosp_1a
+text_dir=data/rnnlm/text_nosp_${affix}
 mkdir -p $dir/config
 set -e
 
@@ -63,8 +64,8 @@ done
 #prepare training and dev data
 if [ $stage -le 0 ]; then
   mkdir -p $text_dir
-  cp $srcdir/train.rnn $text_dir/chime4.txt
-  sed -i -e "s/<RNN_UNK>/<UNK>/g" $text_dir/chime4.txt
+  cp $srcdir/train.rnn $text_dir/chime4.txt.tmp
+  sed -e "s/<RNN_UNK>/<UNK>/g" $text_dir/chime4.txt.tmp > $text_dir/chime4.txt
   cp $srcdir/valid.rnn $text_dir/dev.txt
 fi
 
@@ -114,10 +115,10 @@ if [ $stage -le 3 ]; then
 fi
 
 # Train another model with reversed data(backward model)
-if [ $stage -le 4 ]; then
+if [ $stage -le 4 ] && $use_backward_model; then
   local/rnnlm/run_lstm_back.sh --embedding-dim $embedding_dim \
     --lstm-rpd $lstm_rpd --lstm-nrpd $lstm_nrpd \
-    --ac-model-dir ${ac_model_dir} $enhan
+    --affix $affix
 fi
 
 # Since lattice-rescoring performs worse but faster than nbest-rescoring,
@@ -153,22 +154,37 @@ if [ $stage -le 6 ] && $run_nbest_rescore; then
   echo "$0: Perform nbest-rescoring on $ac_model_dir"
   for decode_set in dt05_real dt05_simu et05_real et05_simu; do
     decode_dir=$tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${LM}
-
+    (
     # Lattice rescoring
     rnnlm/lmrescore_nbest.sh \
       --cmd "$train_cmd --mem 2G" --N $nbest \
       $rnnweight data/lang_test_$LM $dir \
       data/${decode_set}_${enhan}_chunked ${decode_dir} \
-      $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} &
+      $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}
+
+    if $use_backward_model; then
+      rnnlm/lmrescore_nbest_back.sh \
+        --cmd "$train_cmd --mem 2G" --N $nbest \
+        $rnnweight data/lang_test_$LM ${dir}_back \
+        data/${decode_set}_${enhan}_chunked \
+        $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
+        $tgtdir/decode_tgpr_5k_${decode_set}_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi
+    fi
+    ) &
   done
-  
   wait
-  
   # calc wers for nbest-rescoring results
-  local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
+  if $use_backward_model; then
+    local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi \
       $tgtdir/graph_tgpr_5k \
-      > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
-  head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
+      > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi.result
+    head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}_bi.result
+  else
+    local/chime4_calc_wers.sh $tgtdir ${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest} \
+        $tgtdir/graph_tgpr_5k \
+        > $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
+    head -n 15 $tgtdir/best_wer_${enhan}_${decode_dir_suffix}_w${rnnweight}_n${nbest}.result
+  fi
 fi
 
 exit 0
