@@ -10,6 +10,6 @@
 # conf/queue.conf in http://kaldi-asr.org/doc/queue.html for more information,
 # or search for the string 'default_config' in utils/queue.pl or utils/slurm.pl.
 
-export train_cmd="queue.pl -q all.q@compute-0-[456].local -r y -cwd -V"
-export decode_cmd="queue.pl -q all.q@compute-0-[456].local -r y -cwd -V"
+export train_cmd="run.pl" #"queue.pl -q all.q -r y -cwd -V"
+export decode_cmd="run.pl" #"queue.pl -q all.q@compute-0-[456].local -r y -cwd -V"
 
