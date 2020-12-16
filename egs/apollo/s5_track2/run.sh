@@ -156,6 +156,9 @@ fi
 if [ $stage -le 10 ]; then
   steps/train_sat.sh --cmd "$train_cmd" \
       5000 100000 data/${train_set} data/lang_sp exp/tri3 exp/tri4
+  steps/align_fmllr.sh --nj $nj --cmd "$train_cmd" \
+      data/${train_set} data/lang_sp exp/tri4 exp/tri4_ali
+
   if $decode; then
     utils/mkgraph.sh data/lang_sp exp/tri4 exp/tri4/graph || exit 1;
     for data in ${test_set}; do
@@ -166,26 +169,24 @@ if [ $stage -le 10 ]; then
 fi
 
 #######################################################################
-# Perform data cleanup for training data.
-#######################################################################
-
-if [ $stage -le 11 ]; then
-  # The following script cleans the data and produces cleaned data
-  steps/cleanup/clean_and_segment_data.sh --nj ${nj} --cmd "$train_cmd" \
-      --segmentation-opts "--min-segment-length 0.3 --min-new-segment-length 0.6" \
-      data/${train_set} data/lang_sp exp/tri4 exp/tri4_cleaned data/${train_set}_cleaned
-fi
-
-#######################################################################
 # Chain model training
 #######################################################################
 
 if [ $stage -le 12 ]; then
   local/chain/run_tdnn.sh --nj ${nj} \
       --stage $nnet_stage \
-      --train-set ${train_set}_cleaned \
+      --train-set ${train_set} \
       --test-sets "$test_set" \
-      --gmm tri4_cleaned --nnet3-affix _${train_set}_cleaned
+      --gmm tri4 --nnet3-affix _${train_set}
+fi
+
+# multi-style training
+if [ $stage -le 13 ]; then
+  local/chain/multi_condition/run_tdnn_aug_1a.sh --nj ${nj} \
+      --stage $nnet_stage \
+      --clean-set ${train_set} \
+      --test-sets "$test_set" \
+      --gmm tri4 --nnet3-affix _${train_set}_aug
 fi
 
 exit 0;

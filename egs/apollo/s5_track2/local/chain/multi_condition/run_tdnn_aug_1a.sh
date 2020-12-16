@@ -10,11 +10,18 @@ set -e
 # configs for 'chain'
 stage=0
 nj=96
-train_set=train
+clean_set=train
+clean_ali=tri4_ali
+train_set=${clean_set}_aug
 test_sets="dev"
 gmm=tri4
-nnet3_affix=_train
+nnet3_affix=_train_aug
 lm_suffix=
+
+# Augmentation options
+aug_list="reverb babble music noise clean" # Original train dir is referred toas `clean`
+num_reverb_copies=1
+use_ivectors=true
 
 # The rest are configs specific to this script.  Most of the parameters
 # are just hardcoded at this level, in the commands below.
@@ -24,7 +31,7 @@ train_stage=-10
 get_egs_stage=-10
 decode_iter=
 
-num_epochs=10
+num_epochs=9
 common_egs_dir=
 # training options
 remove_egs=false
@@ -42,40 +49,65 @@ echo "$0 $@"  # Print the command line for logging
 . ./path.sh
 . ./utils/parse_options.sh
 
-if ! cuda-compiled; then
-  cat <<EOF && exit 1
-This script is intended to be used with GPUs but you have not compiled Kaldi with CUDA
-If you want to use GPUs (and have them), go to src/, and configure and make on a machine
-where "nvcc" is installed.
-EOF
-fi
+#if ! cuda-compiled; then
+#  cat <<EOF && exit 1
+#This script is intended to be used with GPUs but you have not compiled Kaldi with CUDA
+#If you want to use GPUs (and have them), go to src/, and configure and make on a machine
+#where "nvcc" is installed.
+#EOF
+#fi
 
 # The iVector-extraction and feature-dumping parts are the same as the standard
 # nnet3 setup, and you can skip them by setting "--stage 11" if you have already
 # run those things.
-local/nnet3/run_ivector_common.sh --stage $stage \
-                                  --train-set $train_set \
-                                  --test-sets $test_sets \
-                                  --gmm $gmm \
-                                  --nnet3-affix "$nnet3_affix" || exit 1;
+local/nnet3/multi_condition/run_aug_common.sh --stage $stage \
+  --aug-list "$aug_list" --num-reverb-copies $num_reverb_copies \
+  --use-ivectors "$use_ivectors" --train-set $clean_set --test-sets $test_sets \
+  --clean-ali $clean_ali --nnet3-affix "$nnet3_affix" || exit 1;
 
 # Problem: We have removed the "train_" prefix of our training set in
 # the alignment directory names! Bad!
 gmm_dir=exp/$gmm
-tree_dir=exp/chain${nnet3_affix}/tree_sp${tree_affix:+_$tree_affix}
+tree_dir=exp/chain${nnet3_affix}/tree${tree_affix:+_$tree_affix}
 lang=data/lang_chain
-lat_dir=exp/chain${nnet3_affix}/${gmm}_${train_set}_sp_lats
-dir=exp/chain${nnet3_affix}/tdnn${affix}_sp
-train_data_dir=data/${train_set}_sp_hires
-lores_train_data_dir=data/${train_set}_sp
-train_ivector_dir=exp/nnet3${nnet3_affix}/ivectors_${train_set}_sp_hires
+lat_dir=exp/chain${nnet3_affix}/${gmm}_${train_set}_lats
+ali_dir=exp/${clean_ali}_aug
+dir=exp/chain${nnet3_affix}/tdnn${affix}
+train_data_dir=data/${train_set}_hires
+train_ivector_dir=exp/nnet3${nnet3_affix}/ivectors_${train_set}
 
-for f in $gmm_dir/final.mdl $train_data_dir/feats.scp $train_ivector_dir/ivector_online.scp \
-    $lores_train_data_dir/feats.scp; do
+for f in $gmm_dir/final.mdl $train_data_dir/feats.scp $train_ivector_dir/ivector_online.scp; do
   [ ! -f $f ] && echo "$0: expected file $f to exist" && exit 1
 done
 
-if [ $stage -le 10 ]; then
+if [ $stage -le 11 ]; then
+  # Get the alignments as lattices (gives the LF-MMI training more freedom).
+  # use the same num-jobs as the alignments
+  prefixes=""
+  include_original=false
+  for n in $aug_list; do
+    if [ "$n" == "reverb" ]; then
+      for i in `seq 1 $num_reverb_copies`; do
+        prefixes="$prefixes "reverb$i
+      done
+    elif [ "$n" != "clean" ]; then
+      prefixes="$prefixes "$n
+    else
+      # The original train directory will not have any prefix
+      # include_original flag will take care of copying the original lattices
+      include_original=true
+    fi
+  done
+  nj=$(cat exp/tri4_ali_aug/num_jobs) || exit 1;
+  steps/align_fmllr_lats.sh --nj $nj --cmd "$train_cmd" --generate-ali-from-lats true \
+    data/${clean_set} data/lang_sp $gmm_dir ${lat_dir}_clean
+  rm ${lat_dir}_clean/fsts.*.gz # save space
+  steps/copy_lat_dir.sh --nj $nj --cmd "$train_cmd" \
+    --include-original "$include_original" --prefixes "$prefixes" \
+    data/${train_set} ${lat_dir}_clean ${lat_dir} || exit 1;
+fi
+
+if [ $stage -le 12 ]; then
   echo "$0: creating lang directory $lang with chain-type topology"
   # Create a version of the lang/ directory that has one state per phone in the
   # topo file. [note, it really has two states.. the first one is only repeated
@@ -89,7 +121,7 @@ if [ $stage -le 10 ]; then
       exit 1;
     fi
   else
-    cp -r data/lang $lang
+    cp -r data/lang_sp $lang
     silphonelist=$(cat $lang/phones/silence.csl) || exit 1;
     nonsilphonelist=$(cat $lang/phones/nonsilence.csl) || exit 1;
     # Use our special topology... note that later on may have to tune this
@@ -98,16 +130,7 @@ if [ $stage -le 10 ]; then
   fi
 fi
 
-if [ $stage -le 11 ]; then
-  # Get the alignments as lattices (gives the chain training more freedom).
-  # use the same num-jobs as the alignments
-  steps/align_fmllr_lats.sh --nj ${nj} --cmd "$train_cmd" --generate-ali-from-lats true \
-    ${lores_train_data_dir} \
-    data/lang $gmm_dir $lat_dir
-  rm $lat_dir/fsts.*.gz # save space
-fi
-
-if [ $stage -le 12 ]; then
+if [ $stage -le 13 ]; then
   # Build a tree using our new topology.  We know we have alignments for the
   # speed-perturbed data (local/nnet3/run_ivector_common.sh made them), so use
   # those.  The num-leaves is always somewhat less than the num-leaves from
@@ -118,11 +141,11 @@ if [ $stage -le 12 ]; then
   fi
   steps/nnet3/chain/build_tree.sh \
     --frame-subsampling-factor 3 \
-    --cmd "$train_cmd" 3500 ${lores_train_data_dir} \
-    $lang $lat_dir $tree_dir
+    --cmd "$train_cmd" 3500 data/${train_set} \
+    $lang $ali_dir $tree_dir
 fi
 
-if [ $stage -le 13 ]; then
+if [ $stage -le 14 ]; then
   mkdir -p $dir
   echo "$0: creating neural net configs using the xconfig parser";
 
@@ -171,7 +194,7 @@ EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
 fi
 
-if [ $stage -le 14 ]; then
+if [ $stage -le 15 ]; then
   if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $dir/egs/storage ]; then
     utils/create_split_dir.pl \
      /export/b0{3,4,5,6}/$USER/kaldi-data/egs/chime5-$(date +'%m_%d_%H_%M')/s5/$dir/egs/storage $dir/egs/storage
@@ -208,15 +231,15 @@ if [ $stage -le 14 ]; then
     --dir $dir  || exit 1;
 fi
 
-if [ $stage -le 15 ]; then
+if [ $stage -le 16 ]; then
   # Note: it's not important to give mkgraph.sh the lang directory with the
   # matched topology (since it gets the topology file from the model).
   utils/mkgraph.sh \
-    --self-loop-scale 1.0 data/lang${lm_suffix}/ \
+    --self-loop-scale 1.0 data/lang_sp${lm_suffix}/ \
     $tree_dir $tree_dir/graph${lm_suffix} || exit 1;
 fi
 
-if [ $stage -le 16 ] && [[ $skip_decoding == "false" ]]; then
+if [ $stage -le 17 ] && [[ $skip_decoding == "false" ]]; then
   frames_per_chunk=$(echo $chunk_width | cut -d, -f1)
   rm $dir/.error 2>/dev/null || true
 
