@@ -24,8 +24,6 @@ nnet3_affix=_train
 . ./path.sh
 . ./utils/parse_options.sh
 
-if [ -e data/rt03 ]; then maybe_rt03=rt03; else maybe_rt03= ; fi
-
 if [ $stage -le 0 ]; then
   # Adding simulated RIRs to the original data directory
   echo "$0: Preparing data/${train_set}_reverb directory"

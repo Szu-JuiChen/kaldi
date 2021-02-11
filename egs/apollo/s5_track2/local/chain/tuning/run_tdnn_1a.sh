@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# This is the original 1b script that use the same setting from Behavox paper
+
 # This factorized TDNN (TDNN-F) script is adapted from SWBD recipe 7q.
 # It uses resnet-style skip connections.
 # For details, refer to the paper:
@@ -27,7 +29,7 @@ decode_iter=
 num_epochs=10
 common_egs_dir=
 # training options
-remove_egs=false
+remove_egs=true
 # training chunk-options
 chunk_width=140,100,160
 xent_regularize=0.1
